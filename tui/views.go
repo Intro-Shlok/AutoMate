@@ -125,6 +125,56 @@ func (m *Model) sidebarView() string {
 	return sideTitleStyle.Width(26).Render(" Domains ") + "\n" + b.String()
 }
 
+func (m *Model) compactListView(width int) string {
+	var b strings.Builder
+
+	// Compact title
+	title := " Tools "
+	if m.selectedDomain != "" && m.selectedDomain != "all" {
+		title = fmt.Sprintf(" %s ", m.selectedDomain)
+	}
+	b.WriteString(detailTitleStyle.Width(width).Render(title))
+	b.WriteString("\n")
+
+	for i, t := range m.filtered {
+		prefix := "  "
+		if i == m.cursor {
+			prefix = "▸ "
+		}
+
+		nameStr := prefix + t.Name
+		if i == m.cursor {
+			nameStr = itemSelectedStyle.Render(prefix + t.Name)
+		} else {
+			nameStr = itemStyle.Render(nameStr)
+		}
+
+		statusStr := " "
+		if s, ok := m.statuses[t.ID]; ok {
+			if s.OnPath {
+				statusStr = itemInstalledStyle.Render("✓")
+			} else if s.PackageManager != "" || s.DockerImage {
+				statusStr = itemInstalledStyle.Render("~")
+			} else {
+				statusStr = itemNotInstalledStyle.Render("✗")
+			}
+		}
+
+		b.WriteString(fmt.Sprintf(" %s %s\n", statusStr, nameStr))
+
+		// Limit visible items to available height
+		if i > 30 {
+			remaining := len(m.filtered) - i - 1
+			if remaining > 0 {
+				b.WriteString(fmt.Sprintf("  ... %d more\n", remaining))
+			}
+			break
+		}
+	}
+
+	return b.String()
+}
+
 func (m *Model) bootView() string {
 	var b strings.Builder
 

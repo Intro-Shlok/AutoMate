@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Intro-Shlok/AutoMate/core"
 )
@@ -36,12 +37,15 @@ const (
 
 type bootDoneMsg struct{}
 type leaderTimeoutMsg struct{}
+type spinnerTickMsg struct{}
 
 type installProgressMsg struct {
 	output string
 	err    error
 	done   bool
 }
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type sysInfo struct {
 	hostname  string
@@ -83,6 +87,7 @@ type Model struct {
 	installOutput   string
 	installingTool  *core.ToolDefinition
 	installMethod   string
+	spinnerIndex    int
 }
 
 func NewApp(tools []core.ToolDefinition, cache *core.Cache) *Model {
@@ -120,9 +125,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.leaderActive = false
 		return m, nil
 
+	case spinnerTickMsg:
+		if m.currentScreen == screenInstallProgress {
+			m.spinnerIndex = (m.spinnerIndex + 1) % len(spinnerFrames)
+			return m, spinnerTick()
+		}
+		return m, nil
+
 	case installProgressMsg:
 		if msg.done {
 			m.currentScreen = screenDetail
+			m.installOutput = msg.output
 			if m.selected != nil {
 				status := core.DetectTool(*m.selected)
 				m.statuses[m.selected.ID] = status
@@ -298,22 +311,28 @@ func (m *Model) handleInstallKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func spinnerTick() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
+		return spinnerTickMsg{}
+	})
+}
+
 func (m *Model) runInstall(tool core.ToolDefinition) tea.Cmd {
-	return func() tea.Msg {
-		var buf bytes.Buffer
-		opts := core.InstallOptions{
-			Output: &buf,
-		}
-		err := core.InstallTool(tool, opts)
+	return tea.Batch(
+		spinnerTick(),
+		func() tea.Msg {
+			var buf bytes.Buffer
+			opts := core.InstallOptions{
+				Output: &buf,
+			}
+			_ = core.InstallTool(tool, opts)
 
-		m.installOutput = buf.String()
-
-		return installProgressMsg{
-			output: buf.String(),
-			err:    err,
-			done:   true,
-		}
-	}
+			return installProgressMsg{
+				output: buf.String(),
+				done:   true,
+			}
+		},
+	)
 }
 
 func (m *Model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -428,11 +447,16 @@ func (m *Model) View() string {
 
 	if m.paletteVisible {
 		content = m.baseView() + "\n\n" + m.paletteView()
+	} else if m.currentScreen == screenDetail {
+		// Split layout: compact list on left, detail on right
+		listWidth := 40
+		left := m.compactListView(listWidth)
+		right := m.detailView()
+		content = lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
 	} else {
 		content = m.baseView()
 	}
 
-	// Add status bar at bottom (not on boot screen)
 	if m.currentScreen != screenBoot {
 		content += "\n" + m.statusBarView()
 	}
