@@ -94,8 +94,11 @@ func detectToolWithScanner(tool ToolDefinition, scanner *PathScanner, checkVersi
 					status.DockerImage = true
 				}
 			case "apt", "brew", "pip", "go", "cargo", "npm", "gem":
-				if pkg := checkPackageManager(inst); pkg != "" {
+				if pkg, ver := checkPackageManager(inst); pkg != "" {
 					status.PackageManager = pkg
+					if checkVersion && ver != "" {
+						status.Version = ver
+					}
 				}
 			}
 			if status.DockerImage || status.PackageManager != "" {
@@ -130,18 +133,18 @@ func guessBinaryName(tool ToolDefinition) string {
 		}
 	}
 
-	// For tools with custom entries, try the first Install command binary
+	// Try the ID as the binary name (with dashes and without)
+	candidate := strings.ReplaceAll(tool.ID, "-", "")
+	if _, err := exec.LookPath(candidate); err == nil {
+		return candidate
+	}
+
+	// Try package name from install methods as binary name
 	if len(tool.Install) > 0 {
 		for _, inst := range tool.Install {
-			if len(inst.Commands) > 0 {
-				cmd := inst.Commands[0]
-				parts := strings.Fields(cmd)
-				for _, p := range parts {
-					if !strings.HasPrefix(p, "-") && !strings.HasPrefix(p, "http") && p != "&&" {
-						if _, err := exec.LookPath(p); err == nil {
-							return p
-						}
-					}
+			if inst.PackageName != "" {
+				if _, err := exec.LookPath(inst.PackageName); err == nil {
+					return inst.PackageName
 				}
 			}
 		}
@@ -175,9 +178,9 @@ func checkDockerImage(image string) bool {
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
-func checkPackageManager(inst Install) string {
+func checkPackageManager(inst Install) (string, string) {
 	if inst.PackageName == "" {
-		return ""
+		return "", ""
 	}
 
 	switch inst.Method {
@@ -196,102 +199,105 @@ func checkPackageManager(inst Install) string {
 	case "gem":
 		return checkGem(inst.PackageName)
 	}
-	return ""
+	return "", ""
 }
 
-func checkAPT(pkg string) string {
+func checkAPT(pkg string) (string, string) {
 	if runtime.GOOS != "linux" {
-		return ""
+		return "", ""
 	}
 	cmd := exec.Command("dpkg", "-s", pkg)
 	if err := cmd.Run(); err == nil {
-		// Get version
 		out, _ := exec.Command("dpkg", "-s", pkg).Output()
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.HasPrefix(line, "Version:") {
-				return "apt:" + strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+				return "apt", strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
 			}
 		}
-		return "apt"
+		return "apt", ""
 	}
 	cmd = exec.Command("dpkg-query", "-W", "-f=${Version}", pkg)
 	if out, err := cmd.Output(); err == nil {
-		return "apt:" + strings.TrimSpace(string(out))
+		return "apt", strings.TrimSpace(string(out))
 	}
-	return ""
+	return "", ""
 }
 
-func checkBrew(pkg string) string {
+func checkBrew(pkg string) (string, string) {
 	if runtime.GOOS != "darwin" {
-		return ""
+		return "", ""
 	}
 	cmd := exec.Command("brew", "list", pkg)
 	if err := cmd.Run(); err == nil {
 		out, _ := exec.Command("brew", "info", pkg).Output()
 		lines := strings.Split(string(out), "\n")
 		if len(lines) > 0 {
-			return "brew:" + strings.TrimSpace(lines[0])
+			return "brew", strings.TrimSpace(lines[0])
 		}
-		return "brew"
+		return "brew", ""
 	}
-	return ""
+	return "", ""
 }
 
-func checkPip(pkg string) string {
+func checkPip(pkg string) (string, string) {
 	cmd := exec.Command("pip", "show", pkg)
 	out, err := cmd.Output()
 	if err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.HasPrefix(line, "Version:") {
-				return "pip:" + strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+				return "pip", strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
 			}
 		}
-		return "pip"
+		return "pip", ""
 	}
-	return ""
+	return "", ""
 }
 
-func checkGo(pkg string) string {
+func checkGo(pkg string) (string, string) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return ""
+		return "", ""
 	}
 	cmd := exec.Command("go", "version", "-m", pkg)
 	if err := cmd.Run(); err == nil {
-		return "go"
+		return "go", ""
 	}
-	return ""
+	return "", ""
 }
 
-func checkCargo(pkg string) string {
+func checkCargo(pkg string) (string, string) {
 	cmd := exec.Command("cargo", "install", "--list")
 	out, err := cmd.Output()
 	if err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.HasPrefix(line, pkg) {
-				return "cargo:" + strings.TrimSpace(line)
+				parts := strings.SplitN(line, " ", 2)
+				if len(parts) == 2 {
+					return "cargo", strings.TrimSpace(parts[1])
+				}
+				return "cargo", strings.TrimSpace(line)
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
-func checkNpm(pkg string) string {
+func checkNpm(pkg string) (string, string) {
 	cmd := exec.Command("npm", "list", "-g", pkg)
 	if err := cmd.Run(); err == nil {
-		return "npm"
+		return "npm", ""
 	}
-	return ""
+	return "", ""
 }
 
-func checkGem(pkg string) string {
+func checkGem(pkg string) (string, string) {
 	cmd := exec.Command("gem", "list", pkg)
 	out, err := cmd.Output()
 	if err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.HasPrefix(line, pkg) {
-				return "gem:" + strings.TrimSpace(line)
+				return "gem", strings.TrimSpace(line)
 			}
 		}
 	}
-	return ""
+	return "", ""
 }

@@ -23,9 +23,12 @@ Examples:
   automate search --capability network.scan
   automate search --domain security
 `,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		query := args[0]
+		query := ""
+		if len(args) > 0 {
+			query = args[0]
+		}
 		capability, _ := cmd.Flags().GetString("capability")
 		domain, _ := cmd.Flags().GetString("domain")
 		format, _ := cmd.Flags().GetString("format")
@@ -61,7 +64,13 @@ Examples:
 			return nil
 		}
 
-		fmt.Printf("\n  %d results for \"%s\"\n\n", len(results), query)
+		displayQuery := query
+		if displayQuery == "" && capability != "" {
+			displayQuery = "capability:" + capability
+		} else if displayQuery == "" && domain != "" {
+			displayQuery = "domain:" + domain
+		}
+		fmt.Printf("\n  %d results for \"%s\"\n\n", len(results), displayQuery)
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 		fmt.Fprintln(w, "  ID\tNAME\tDESCRIPTION")
 
