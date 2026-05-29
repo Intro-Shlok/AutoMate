@@ -32,7 +32,6 @@ jobs:
       - run: go test ./... -v
 
   cross-build:
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     strategy:
       matrix:
