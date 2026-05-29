@@ -2,10 +2,20 @@ package core
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 )
+
+func logTo(opts InstallOptions, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if opts.Output != nil {
+		fmt.Fprintln(opts.Output, msg)
+	} else {
+		fmt.Println(msg)
+	}
+}
 
 // InstallTool installs a tool using its defined install methods
 func InstallTool(tool ToolDefinition, opts InstallOptions) error {
@@ -13,25 +23,24 @@ func InstallTool(tool ToolDefinition, opts InstallOptions) error {
 		return fmt.Errorf("no install methods defined for %s", tool.Name)
 	}
 
-	fmt.Printf("Installing %s...\n", tool.Name)
+	logTo(opts, "Installing %s...", tool.Name)
 
-	// Try each install method in order, use first that works
 	for _, inst := range tool.Install {
 		if opts.Method != "" && inst.Method != opts.Method {
 			continue
 		}
 
-		fmt.Printf("  Method: %s\n", inst.Method)
+		logTo(opts, "  Method: %s", inst.Method)
 
-		if err := runInstallMethod(inst, tool.Name); err != nil {
-			fmt.Printf("  ! Failed: %v\n", err)
+		if err := runInstallMethod(inst, opts); err != nil {
+			logTo(opts, "  ! Failed: %v", err)
 			if opts.Method != "" {
 				return err
 			}
 			continue
 		}
 
-		fmt.Printf("  ✓ %s installed successfully\n", tool.Name)
+		logTo(opts, "  ✓ %s installed successfully", tool.Name)
 		return nil
 	}
 
@@ -44,11 +53,11 @@ func InstallAllTools(tools []ToolDefinition, opts InstallOptions) (int, error) {
 	for _, t := range tools {
 		status := DetectTool(t)
 		if status.OnPath || status.DockerImage || status.PackageManager != "" {
-			fmt.Printf("  • %s already installed\n", t.Name)
+			logTo(opts, "  • %s already installed", t.Name)
 			continue
 		}
 		if err := InstallTool(t, opts); err != nil {
-			fmt.Printf("  ✗ %s: %v\n", t.Name, err)
+			logTo(opts, "  ✗ %s: %v", t.Name, err)
 			continue
 		}
 		installed++
@@ -60,15 +69,16 @@ type InstallOptions struct {
 	Method string // If set, only use this install method
 	DryRun bool
 	Yes    bool // Auto-confirm
+	Output io.Writer // If set, redirect command output here instead of stdout
 }
 
-func runInstallMethod(inst Install, toolName string) error {
+func runInstallMethod(inst Install, opts InstallOptions) error {
 	for _, cmdStr := range inst.Commands {
 		if cmdStr == "" {
 			continue
 		}
 
-		fmt.Printf("    → %s\n", cmdStr)
+		logTo(opts, "    → %s", cmdStr)
 
 		var cmd *exec.Cmd
 		if strings.Contains(cmdStr, "&&") || strings.Contains(cmdStr, "|") || strings.Contains(cmdStr, ";") {
@@ -81,8 +91,13 @@ func runInstallMethod(inst Install, toolName string) error {
 			cmd = exec.Command(parts[0], parts[1:]...)
 		}
 
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		if opts.Output != nil {
+			cmd.Stdout = opts.Output
+			cmd.Stderr = opts.Output
+		} else {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+		}
 
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("command failed: %w", err)
