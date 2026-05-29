@@ -1,0 +1,4 @@
+automate
+dist/
+*.exe
+.DS_Store
